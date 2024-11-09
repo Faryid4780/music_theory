@@ -34,14 +34,14 @@ AUGMENTED = 'aug'
 DOMINANT = ''
 MMAJOR = 'mmaj'
 
-rome_num = {1: 'I',
-            2: 'II',
-            3: 'III',
-            4: 'IV',
-            5: 'V',
-            6: 'VI',
-            7: 'VII'}
-num_rome = dict(zip(rome_num.values(), rome_num.keys()))
+degree_num = {1: 'I',
+              2: 'II',
+              3: 'III',
+              4: 'IV',
+              5: 'V',
+              6: 'VI',
+              7: 'VII'}
+num_degree = dict(zip(degree_num.values(), degree_num.keys()))
 
 twelvetone_equal_temperament = 27.5 * np.logspace(0, 7.25, 88, endpoint=True, base=2)
 phonic_dict = {'C': 3, 'Db': 4, 'D': 5, 'Eb': 6, 'E': 7, 'F': 8, 'Gb': 9, 'G': 10, 'Ab': 11, 'A': 0, 'Bb': 1, 'B': 2}
@@ -93,7 +93,7 @@ class Tonality:
         return self.get_instance_on(root).index(tone) + 1
 
     def get_rome_level_of(self, root, tone) -> str:
-        return rome_num.get(self.get_level_of(root, tone))
+        return degree_num.get(self.get_level_of(root, tone))
 
     def get_instance_on(self, tone) -> tuple:
         i = phonic.index(tone)
@@ -383,6 +383,11 @@ class Chord:
         self.interval.sort(key=Interval.sort_method)
 
     def name_at_diatonic(self, r, tonality: Tonality = MajorTonality()) -> str:
+        """
+        :param r: 音调
+        :param tonality: 调性
+        :return: 返回Degree Name （级数名）
+        """
         return self.level_at_diatonic(r, tonality) + self.surfix
 
     def level_at_diatonic(self, r, tonality: Tonality = MajorTonality()) -> str:
@@ -391,7 +396,7 @@ class Chord:
         i = Interval.from_location(rn - n, tonality)
         print(i)
         x = ('b', '', '#')
-        return rome_num.get((i.var) % 8 + 2, 'VII') + x[i.delta + 1]
+        return degree_num.get((i.var) % 8 + 2, 'VII') + x[i.delta + 1]
 
     def is_diatonic_of(self, r, tonality: Tonality) -> bool:
         instance = tonality.get_instance_on(r)
@@ -551,7 +556,7 @@ class ChordFunc:
     def __init__(self, chord: Chord, in_ph: str, tonality: Tonality):
         self.in_ph = in_ph
         self.chord = chord
-        self.level = num_rome.get(chord.level_at_diatonic(in_ph))
+        self.level = num_degree.get(chord.level_at_diatonic(in_ph))
         if 'b' in self.level or '#' in self.level or not self.level:
             raise Exception("该和弦离调，不支持判断功能")
 
