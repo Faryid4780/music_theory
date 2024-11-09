@@ -16,7 +16,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 
 import music_theory2 as mt
-from AudioAnalytic import NewMainProgram as NewALMainProgram
+from AudioAnalyticSTFTSave import NewMainProgram as NewALMainProgram
 from music_theory2 import Chord
 
 
