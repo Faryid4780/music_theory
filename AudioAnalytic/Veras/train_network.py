@@ -399,7 +399,7 @@ def train2(training_libs_improved:list):
 import os
 
 def get_all_libs() -> list:
-    folder_path = 'C:\\Users\\Administrator\\PycharmProjects\\VideoGet\\venv\\stft_data'  # 替换为你的文件夹路径
+    folder_path = 'stft_data'  # 替换为你的文件夹路径
     dat_files = []
 
     for filename in os.listdir(folder_path):
