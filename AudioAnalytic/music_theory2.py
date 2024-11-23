@@ -616,6 +616,217 @@ def secondary_dominant_tendency(dominant_chord: Chord, at_ph: str, tonality: Ton
         return
     return tonality.get_chord(at_ph, root_list.index(next_root), dominant_chord.has_7)
 
+class ChordProgressionNode:
+    """和弦进行节点"""
+    def __init__(self, chord: Chord = None, next=None):
+        self.chord = chord
+        self.next = next
+
+    @property
+    def motion_func(self):
+        """判断该节点上和弦的功能"""
+        return
+
+
+class ChordProgressionGroup:
+    """和弦组，采用单向链表"""
+
+    def __init__(self):
+        self.head = ChordProgressionNode()  # 头节点
+
+    def create(self, l, order):
+        if order:
+            self.create_tail(l)
+        else:
+            self.create_head(l)
+
+    def create_tail(self, l):
+        """尾插法"""
+        for item in l:
+            self.append(item)
+
+    def create_head(self, l):
+        """头插法"""
+        for item in l:
+            self.insert(0, item)
+
+    def clear(self):
+        """清空和弦进行组"""
+        self.head = ChordProgressionNode()
+
+    def is_empty(self):
+        """判断该组是否为空"""
+        return self.head.next is None
+
+    @property
+    def length(self):
+        """返回组的长度"""
+        p = self.head.next
+        length = 0
+        while p is not None:
+            p = p.next
+            length += 1
+        return length
+
+    def get_node(self, i):
+        """读取和弦进行组的第i个和弦节点"""
+        p = self.head.next
+        j = 0
+        while j < i and p is not None:
+            p = p.next  # p 从 list[j]到list[j+1]
+            j += 1  # j同步
+        # 此时j==i，因此j索引就是p的位置，否则为非法位置
+        if j > i or p is None:
+            raise IndexError(f"该和弦组不存在第{j}个和弦")
+        return p
+
+    def get(self, i):
+        """读取和弦进行组的第i个和弦"""
+        return self.get_node(i).chord
+
+    def insert(self, i, x:Chord):
+        """插入和弦x作为组中第i个和弦"""
+        p = self.head
+        j = -1
+        while j < i - 1 and p is not None:
+            p = p.next  # p 从 list[j]到list[j+1]
+            j += 1  # j同步
+        if i < j or p is None:
+            raise IndexError("插入位置非法")
+        # 此时j==i-1
+
+        if p.next is None:
+            p.next = ChordProgressionNode(x)
+        else:
+            p.next = ChordProgressionNode(x, p.next)
+
+    def insert_group(self, i:int, group):
+        """将另一串链表插入"""
+        assert isinstance(group, ChordProgressionGroup), "插入对象必须是 ChordProgressionGroup"
+        if group.is_empty():
+            return  # 空链表无需插入
+
+        # 找到第 i-1 个节点的位置，若 i = 0 则返回 head
+        node = self.get_node(i - 1) if i > 0 else self.head
+
+        # 保存原链表在 i 位置后的部分
+        following_nodes = node.next
+
+        # 插入 group 的链表
+        node.next = group.head.next
+
+        # 找到插入组的尾部节点
+        while node.next is not None:
+            node = node.next
+
+        # 将原链表的后续部分连接到插入组尾部
+        node.next = following_nodes
+
+
+
+    def insert_list(self, i, l):
+        """将一串列表插入"""
+        for item in l:
+            self.insert(i, item)
+            i += 1
+
+    def remove(self, i) -> Chord:
+        """删除第i个元素"""
+        p = self.head
+        j = -1
+        while j < i - 1 and p is not None:
+            p = p.next
+            j += 1
+
+        if i - 1 < j or p.next is None:
+            raise IndexError("删除位置不合法")
+
+        a = p.next.chord
+        p.next = p.next.next
+
+        return a
+
+    def append(self, x: Chord):
+        """在末尾添加一个和弦"""
+        p = self.head
+        while p.next is not None:
+            p = p.next
+        p.next = ChordProgressionNode(x)
+
+    def index(self, x: Chord):
+        """返回和弦 x 首次出现的位序号"""
+        p = self.head.next
+        j = 0
+        while p is not None:
+            if x == p.chord:
+                return j
+            p = p.next
+            j += 1
+        raise ValueError(f"无法从组中找到 {x} 和弦")
+
+    def display(self):
+        """输出和弦组中各个数据元素的值"""
+        p = self.head.next
+        while p is not None:
+            print(p.chord, end=' ')
+            p = p.next
+
+    def insert_dim_passing(self, i:int, with_7:bool=False, half_dim:bool=False):
+        """
+        将在i处的和弦和i+1处的和弦之间添加一个经过减和弦 (Passing Diminsh)
+
+        若不可以添加，则返回IndexError或Exception
+        """
+        node = self.get_node(i)
+        if node.next is None:
+            raise IndexError("i+1位置必须存在和弦")
+
+        assert Interval.get_location(node.chord.root, node.next.chord.root) == 2, "两个和弦根音必须相隔1个全音"
+
+        dim_root = phonic[(findph(node.chord.root) + 1) % len(phonic)]
+        if with_7:
+            if half_dim:
+                dim = Chord(dim_root, MINOR, 7, others=(Interval(5, -1)))
+            else:
+                dim = Chord(dim_root, DIMISHED, 7)
+        else:
+            dim = Chord(dim_root, DIMISHED)
+
+        self.insert(i+1, dim)
+
+
+
+class Motion251Group(ChordProgressionGroup):
+    """
+    创建一个251进行，分大调251与小调251，
+    还有较为暧昧的前大调后小调，请自行创建Tonality以使用
+    """
+
+    def __init__(self, as_1, tonality=MajorTonality()):
+        super().__init__()
+        self.create_tail(
+            (tonality.get_chord(as_1, 2 - 1),
+             tonality.get_chord(as_1, 5 - 1),
+             tonality.get_chord(as_1, 1 - 1))
+        )
+
+
+class SecondaryDominantGroup(ChordProgressionGroup):
+    """
+    创建一个原和弦转附属和弦再解决的进行
+    """
+
+    def __init__(self, ori: Chord, at_tone, tonality=MajorTonality()):
+        super().__init__()
+        dom = Chord(ori.root, DOMINANT, 7, kwargs=ori.kwargs)
+        solve = secondary_dominant_tendency(dom, at_tone, tonality)
+
+        self.create_tail((
+            ori,
+            dom,
+            solve
+        ))
+
 
 if __name__ == '__main__':
     r = Chord.from_tones(("C", "Eb", "G", "Bb"))
