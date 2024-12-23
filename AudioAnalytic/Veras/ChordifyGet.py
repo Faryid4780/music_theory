@@ -17,7 +17,7 @@ from selenium.webdriver.chrome.options import Options
 
 import music_theory2 as mt
 from AudioAnalyticSTFTSave import NewMainProgram as NewALMainProgram
-from music_theory2 import Chord
+from music_theory2 import Chord, ChordSlash
 
 
 def fix_string(input_: str):
@@ -111,7 +111,7 @@ proxies = {
 YTDL_PATH = "youtube_downloaded"
 
 
-def _get_chord(root: str, ctype: str, numbers: str) -> Chord:
+def _get_chord(root: str, ctype: str, numbers: str, lowest: str = None) -> Chord:
     """3
     :param root: 根音（非music_theory库规范）
     :param ctype: 和弦类型
@@ -131,18 +131,16 @@ def _get_chord(root: str, ctype: str, numbers: str) -> Chord:
     if len(ctype) > 3 or not mt_dict.get(ctype):
         option = ctype[-3:]
 
-    def astr(i):
-        return '"' + str(i) + '"'
+    lowest = root if not lowest else lowest
+    numbers = int(numbers) if numbers else 0
 
     if not option:
-        code = f"Chord({','.join((astr(root), astr(mt_dict.get(ctype)), numbers))})"
+        return ChordSlash(*(root, mt_dict.get(ctype)), numbers, lowest=lowest)
     else:
         if len(ctype) > 3:
-            code = f"Chord({','.join((astr(root), astr(mt_dict.get(ctype[:3])), '0', option + '=' + numbers))})"
+            return ChordSlash(*(root, mt_dict.get(ctype[:3])), 0, *{option: numbers, 'lowest': lowest})
         else:
-            code = f"Chord({','.join((astr(root), astr(mt.DOMINANT), '0', option + '=' + numbers))})"
-    return eval(code)
-
+            return ChordSlash(*(root, mt.DOMINANT), 0, *{option: numbers, 'lowest': lowest})
 
 def get_youtube_id_from_api_url(url: str) -> str:
     """
@@ -173,16 +171,21 @@ def to_mt_chord(chord_name: str) -> Chord:
         suffix = match.group(2)  # 和弦类型
 
         # 使用正则表达式分割suffix
-        suffix_match = re.search(r"([A-Za-z]+)(\d*)$", suffix)
+        suffix_match = re.search(r"([A-Za-z]+)(\d*)(/[A-Za-z]*)?$", suffix)
         if suffix_match:
             letters = suffix_match.group(1)  # maj
             numbers = suffix_match.group(2)  # 几和弦 (如果存在，否则None)
+            lowest = suffix_match.group(3)  # 最低音
+            lowest = lowest[1:] if lowest is not None else lowest
 
             # 返回结果
-            return _get_chord(root, letters, numbers)
+            return _get_chord(root, letters, numbers, lowest=lowest)
         else:
+            suffix_match = re.search(r"(\d*)(/[A-Za-z]*)?$", suffix)
+            lowest = suffix_match.group(2)  # 最低音
+            lowest = lowest[1:] if lowest is not None else lowest
             # 属n和弦
-            return _get_chord(root, '', suffix[1:])
+            return _get_chord(root, '', suffix_match.group(1), lowest=lowest)
 
     logging.warning("Invalid chord name format: " + chord_name)
 
@@ -212,7 +215,6 @@ class Main:
         self.chrome_version = 130
         self.system_xn = "64"
         self.windows_version_i = 0
-        self.session = requests.Session()
 
         # self.actionChains = None
 
@@ -297,24 +299,23 @@ class Main:
 
         result = {}
         headers = self.__generate_headers()
-        self.session.headers.update(headers)
-        self.session.proxies.update(self.proxies)
+        chordify = requests.get(self.chordify_url, proxies=proxies, headers=headers)
 
-        chordify = self.session.get(self.chordify_url)
+        options = Options()
+        if self.proxies:
+            options.add_argument(f"--proxy-server={self.proxies['https']}")
+
+        service = Service(executable_path="chromedriver_130_0_6723_92.exe")
+
+        c = webdriver.Chrome(service=service, options=options)
         if not 200 <= chordify.status_code <= 299:
             print("HTTP request failed, status code: " + str(chordify.status_code) + '\n' +
                             chordify.text)
             print("Use Selenium instead")
 
-            options = Options()
-            if self.proxies:
-                options.add_argument(f"--proxy-server={self.proxies['https']}")
 
-            service = Service(executable_path="chromedriver_130_0_6723_92.exe")
-            c = webdriver.Chrome(service=service, options=options)
             c.get(self.chordify_url)
             chordify = c.page_source
-            c.close()
 
         chordify = chordify.text if not isinstance(chordify, str) else chordify
 
@@ -330,22 +331,25 @@ class Main:
             self.video_id = get_youtube_id_from_api_url(json_url)
             self.download_youtube_wav()
 
-            while True:
-                try:
-                    json_response = self.session.get(json_url)
+            print(json_url)
 
-                    json_data = json_response.json()  # 使用requests直接解析为Python字典
-                    break
-                except Exception as e:
-                    # 请求次数过多导致出现安全检查，方法是修改User-Agent
-                    print(e.__class__.__name__, ":", e)
-                    self.__next_headers()
-                    print("Update Headers: ", self.__generate_headers())
+            self.__next_headers()
+            headers = self.__generate_headers()
 
+            json_response = requests.get(json_url, proxies=proxies, headers=headers)
+
+            try:
+                json_data = json_response.json()  # 使用requests直接解析为Python字典
+            except:
+                print("Use Selenium to get JSON instead")
+                c.get(json_url)
+                import json
+                json_data = json.JSONDecoder().decode(BeautifulSoup(c.page_source, 'html.parser').find('pre').text)
 
         else:
             raise Exception("未找到指定的<link>标签。可能是网址有误或者该网址的和弦不支持视频同步")
 
+        c.close()
         assert isinstance(json_data, dict)
 
         print("[Information]")
@@ -398,7 +402,7 @@ urls = [
     # "https://chordify.net/chords/c418-songs/concrete-halls-chords",
     # "https://chordify.net/chords/c418-songs/warmth-chords",
     # "https://chordify.net/chords/c418-songs/wet-hands-chords",
-    # "https://chordify.net/chords/cover-bu-an-si-fanshi-intanetto-zong-jiao-c-cyber-milk-p-thaibeatz-narumiya"
+    # "https://chordify.net/chords/cover-bu-an-si-fanshi-intanetto-zong-jiao-c-cyber-milk-p-thaibeatz-narumiya",
     # "https://chordify.net/chords/shinikariti-uta-qin-ye-kui-dian-jing",
     # "https://chordify.net/chords/yoakeland-dian-jing-arrangement-for-piano-drums-fiveninesquared",
     # "https://chordify.net/chords/quanteanatano-suo-weidesu",
@@ -409,12 +413,21 @@ urls = [
     # "https://chordify.net/chords/fa-guo-yin-le-jia-ai-li-ke-sa-di-luo-ti-ge-wu-ji-nuo-pei-di-gymnopedie-1-3-ericalfred-leslie-satie-classical-tunes",
     # "https://chordify.net/chords/rachmaninoff-prelude-in-g-minor-op-23-no-5-kassia",
     # "https://chordify.net/chords/bach-fantasia-and-fugue-in-g-minor-bwv-542-doeselaar-netherlands-bach-society-netherlands-bach-socie",
-    "https://chordify.net/chords/sayonara-you-ling-wu-ren-jie-zhi-zuo-xuan-minekomanma-dian-jing"
+    # "https://chordify.net/chords/sayonara-you-ling-wu-ren-jie-zhi-zuo-xuan-minekomanma-dian-jing",
+    # "https://chordify.net/chords/xue-xiaono-qi-bu-ke-si-yi-tao-qinchinoi-original-tao-qinchinoi-momone-chinoi",
+    # "https://chordify.net/chords/zael-songs/moonlight-sonata-beethoven-cover-chords",
+    # "https://chordify.net/chords/debussy-clair-de-lune-rousseau"
 ]
+
 if __name__ == '__main__':
     for url in urls:
-        main = Main(url, proxies, 1)
-        main.get()
+        while True:
+            try:
+                main = Main(url, proxies, 1)
+                main.get()
+                break
+            except Exception as e:
+                print("Request Error:", e)
         # try:
         #     main.get()
         # except Exception as e:
