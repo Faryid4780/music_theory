@@ -362,6 +362,7 @@ def train2(training_libs_improved:list):
     global filepath_2
 
     tones_probabilities_array = []
+    lowest_probabilities_array = []
     stft_inputs = []
 
     for tli in training_libs_improved:
@@ -371,26 +372,38 @@ def train2(training_libs_improved:list):
         assert len(stft_data) == len(chord_tuple)
 
         for x in range(len(stft_data)):
-            tones_label = np.zeros(12)
+            tones_label = np.zeros(24)
+            lowest_label = np.zeros(12)
+
             chord = chord_tuple[x]
             if chord is None:
                 continue
 
             stft_inputs.append(stft_data[x])
+            lowest_label[phonic.index(chord.lowest)] = 1
 
-            for t in chord.pure_tones:
-                tones_label[phonic.index(t)] = 1
+            for t in chord.getChord(4):
+                tp = t[:-1]  # 去尾
+
+                if t.endswith('4'):
+                    tones_label[phonic.index(tp)] = 1
+                elif t.endswith('5'):
+                    tones_label[phonic.index(tp)+12] = 1
+                else:
+                    raise Exception('BUG!!!!!!!!!!!!!!!')
 
             tones_probabilities_array.append(tones_label)
+            lowest_probabilities_array.append(lowest_label)
                 
     stft_inputs = np.array(stft_inputs)
     tones_probabilities_array = np.array(tones_probabilities_array)
+    lowest_probabilities_array = np.array(lowest_probabilities_array)
 
     deepmusictheory.model_chord_feature.fit(
         x=(stft_inputs,),
-        y=(tones_probabilities_array,),
+        y=(tones_probabilities_array, lowest_probabilities_array),
         batch_size=len(stft_inputs),
-        epochs=1000,
+        epochs=250,
         callbacks=[checkpoint_feature, early_stopping_feature]
     )
 
@@ -399,11 +412,12 @@ def train2(training_libs_improved:list):
 import os
 
 def get_all_libs() -> list:
-    folder_path = 'stft_data'  # 替换为你的文件夹路径
+    folder_path = 'C:\\Users\\Administrator\\PycharmProjects\\VideoGet\\venv\\stft_data'  # 替换为你的文件夹路径
     dat_files = []
 
     for filename in os.listdir(folder_path):
         if filename.endswith('.dat'):
+            print(filename)
             dat_files.append(os.path.join(folder_path, filename))
 
     return [TrainingLibImproved(path, False) for path in dat_files]
