@@ -1670,7 +1670,7 @@ class ChordProgressionGroup:
 
         self.call_chain(att, start, end)
 
-    def adapt_group_tonic(self, start=0, end=None, tonality=MajorScale(), inaccuracy_limit=0.5, change_range=4):
+    def adapt_group_tonic(self, start=0, end=None, tonality=MajorScale(), inaccuracy_limit=0.53, change_range=16):
         """
         :param tonality: 调性
         :param limit: 改变主音的进行数量阈值, 区间(0,1)
@@ -1694,7 +1694,6 @@ class ChordProgressionGroup:
                 ltos = len(tos)
                 if ltos == 0:
                     return 1
-
                 return c / ltos
 
             i = phonic.index(tonic) % 12
@@ -1709,20 +1708,21 @@ class ChordProgressionGroup:
                 elif ay > rate:
                     root, rate = phonic[id], ay
 
-            return root
+            return root if root else tonic
 
-        mismatched_count = 0
         weights = []
+        mismatched_start = None
 
         while node is not None and loc < end:
             cts = node.chord.chord_tones
             mismatched = sum(1 for ctone in cts if not ctone in instance)
+            node.tonic = current_tonic
+            node.tonality = tonality
             if mismatched <= 0:
                 group_tonic_weights[current_tonic] = group_tonic_weights.get(current_tonic, 0) + 1
-                node.tonic = current_tonic
-                node.tonality = tonality
+
             else:
-                mismatched_count += 1
+                mismatched_start = loc if not mismatched_start else mismatched_start
 
             candidates.append(list(cts))
             weights.append(mismatched)
@@ -1730,31 +1730,20 @@ class ChordProgressionGroup:
                 candidates.pop(0)
                 weights.pop(0)
             candidates_one_d = [n for m in candidates for n in m]
-            print(len(weights), weights)
 
             inaccuracy_rate = sum(weights) / len(candidates_one_d)
-            print('INACCURACY RATE:', inaccuracy_rate)
 
             if inaccuracy_rate >= inaccuracy_limit:
-                print('ADAPT')
+                print('---ADAPT---', loc)
                 new_tonic = guess_other_tonics(current_tonic, candidates_one_d)
                 if new_tonic is None:
                     break  # 无法找到新主音，退出
                 instance = tonality.get_instance_on(new_tonic)
-
-                def find_0_end(iterable):
-                    iter_loc = 0
-                    for n in iterable:
-                        if n != 0:
-                            return iter_loc
-                        iter_loc += 1
-                    return iter_loc
-
-                print(find_0_end(weights))
-                self.change_tonic(new_tonic, loc - change_range + find_0_end(weights),
+                self.change_tonic(new_tonic, max(mismatched_start, loc - change_range),
                                   loc + 1, False, False, tonality)
+                weights = [sum(1 for n in c_ts if not n in instance) for c_ts in candidates]
                 current_tonic = new_tonic
-                candidates.clear()
+                mismatched_start = loc
 
             node = node.next
             loc += 1
@@ -1902,7 +1891,7 @@ if __name__ == '__main__':
     group.display()
     group.adapt_group_tonic()
 
-    p = group.head
+    p = group.head.next
     while p.next is not None:
         print(p.tonic)
         p = p.next
