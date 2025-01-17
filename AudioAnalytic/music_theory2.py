@@ -1609,7 +1609,7 @@ class ChordProgressionGroup:
         :param change_chord_type: 是否和弦类型随其改变，默认True
         :param tonality: 修改后的调式，若为None则不变
 
-        改变一段进行的调根音
+        改变一段进行的调式主音
         """
 
         start_node = self.get_node(start)
@@ -1673,7 +1673,8 @@ class ChordProgressionGroup:
     def adapt_group_tonic(self, start=0, end=None, tonality=MajorScale(), inaccuracy_limit=0.53, change_range=16):
         """
         :param tonality: 调性
-        :param limit: 改变主音的进行数量阈值, 区间(0,1)
+        :param inaccuracy_limit: 主音的不准确度阈值，区间(0,1)，值越大越不易改变调性
+        :param change_range: 缓冲范围
 
         检测调式主音的改变并微调
         """
@@ -1736,8 +1737,6 @@ class ChordProgressionGroup:
             if inaccuracy_rate >= inaccuracy_limit:
                 print('---ADAPT---', loc)
                 new_tonic = guess_other_tonics(current_tonic, candidates_one_d)
-                if new_tonic is None:
-                    break  # 无法找到新主音，退出
                 instance = tonality.get_instance_on(new_tonic)
                 self.change_tonic(new_tonic, max(mismatched_start, loc - change_range),
                                   loc + 1, False, False, tonality)
@@ -1889,9 +1888,9 @@ if __name__ == '__main__':
     group.get(0)
     group.change_tonic('C', change_chord=False, change_chord_type=False)
     group.display()
-    group.adapt_group_tonic()
+    group.adapt_group_tonic(change_range=4)
 
     p = group.head.next
-    while p.next is not None:
+    while p is not None:
         print(p.tonic)
         p = p.next
