@@ -22,9 +22,8 @@ degree_num = {1: 'I',
               5: 'V',
               6: 'VI',
               7: 'VII'}
-num_degree = dict(zip(degree_num.values(), degree_num.keys()))
 
-twelvetone_equal_temperament = 27.5 * np.logspace(0, 7.25, 88, endpoint=True, base=2)
+twelvetone_equal_temperament = 27.5 * np.logspace(0, 7.25, 88, base=2)
 phonic_dict = {'C': 3, 'Db': 4, 'D': 5, 'Eb': 6, 'E': 7, 'F': 8, 'Gb': 9, 'G': 10, 'Ab': 11, 'A': 0, 'Bb': 1, 'B': 2}
 phonic = list(phonic_dict.keys())
 all_phonic = phonic[9:12] + (phonic * 8) + [phonic[0]]
@@ -37,10 +36,10 @@ for p in all_phonic:
 
 basic_scale = (0, 2, 4, 5, 7, 9, 11)
 
-# line---------1  2  3  4  5  6  7
+# --------------------1  2  3  4  5  6  7
 ionian_mode = basic_scale
 dorian_mode = 0, 2, 3, 5, 7, 9, 10
-phygian_mode = 0, 1, 3, 5, 7, 8, 10
+phrygian_mode = 0, 1, 3, 5, 7, 8, 10
 lydian_mode = 0, 2, 4, 6, 7, 9, 11
 mixolydian_mode = 0, 2, 4, 5, 7, 9, 10
 aeolian_mode = 0, 2, 3, 5, 7, 8, 10
@@ -51,7 +50,7 @@ melodic_minor_mode = 0, 2, 3, 5, 7, 9, 11
 mode_names = {
     ionian_mode: "MajorScale",
     dorian_mode: "DorianScale",
-    phygian_mode: "PhygianScale",
+    phrygian_mode: "PhrygianScale",
     lydian_mode: "LydianScale",
     mixolydian_mode: "MixolydianScale",
     aeolian_mode: "MinorScale",
@@ -60,21 +59,26 @@ mode_names = {
     melodic_minor_mode: "MelodicMinorScale"
 }
 
+tonality_relations = {
+    aeolian_mode: [aeolian_mode,
+                   dorian_mode,
+                   harmonic_minor_mode,
+                   phrygian_mode,
+                   melodic_minor_mode,
+                   locrian_mode],
+    ionian_mode: [ionian_mode,
+                  lydian_mode,
+                  mixolydian_mode]
+}
+
 
 def get_father_mode(mode):
     """
     :return: 获取该调式是哪一调式的分支，只返回自然调式
     """
-    if mode in [aeolian_mode,
-                dorian_mode,
-                phygian_mode,
-                locrian_mode,
-                harmonic_minor_mode,
-                melodic_minor_mode]:
+    if mode in tonality_relations[aeolian_mode]:
         return aeolian_mode
-    elif mode in [ionian_mode,
-                  lydian_mode,
-                  mixolydian_mode]:
+    elif mode in tonality_relations[ionian_mode]:
         return ionian_mode
     else:
         return ionian_mode
@@ -87,8 +91,15 @@ interval_delta = {
     MINOR: (0, -1, 0, -1),
     DIMISHED: (0, -1, -1, -2),
     MMAJOR: (0, -1, 0, 0),
-    AUGMENTED: (0, 0, 1, 0)
+    AUGMENTED: (0, 0, 1, -1)
 }
+
+
+def get_pure_tone(tone: str):
+    return re.match('([bA-Z]+)\d', tone).group(1)
+
+
+pt = get_pure_tone
 
 
 def find(target_list: list, target_element):
@@ -126,7 +137,7 @@ class Tonality:
 
         示例:
         ------
-        >>> import music_theory2 as mt
+        >>> import AudioAnalytic.music_theory2 as mt
         >>> tonality = mt.Tonality(mt.aeolian_mode)
         >>> tonality.chord_types
         ('m', 'm', 'maj', 'm', 'm', 'maj', '')
@@ -187,33 +198,58 @@ class Tonality:
         """
         :return: 该调式是否具有增音程
 
-        增音程是和声小调的特征音程（唱起来会较为困难）
+        增音程是和声小调的特征音程
         """
         return 3 in np.diff(np.array([i.location for i in self.intervals]))
 
     @property
-    def feature_tones(self):
+    def dominant_tones(self):
         """
-        获得该调式的特征音。
+        获得该调式的属音。
 
-        一般来说，特征音往往是和主音具有较高不和谐度的音，因此五度圈上相对位置最偏离主音，
+        一般来说，属音往往是和主音具有较高不和谐度的音，因此五度圈上相对位置最偏离主音，
         这同样说明调内和弦中带特征音的和弦为何都归类为下属
         """
-        _5th_locs = tuple(map(get_5th_circle_location, self.get_instance_on('C')))
-        result = []
-
         if self.father_scale == MajorScale():
-            num = 5
+            result = [Interval(7), Interval(7) + Interval(5, -1)]
+        elif self.father_scale == MinorScale():
+            result = [Interval(6, -1), Interval(6, -1) + Interval(5, -1)]
         else:
-            num = 4
+            result = []
 
-        for n in np.array(_5th_locs)[np.where(np.abs(_5th_locs) >= num)]:
-            result.append(i5_circle[n])
-
-        if self.name == 'MajorScale':
-            result.append(i5_circle[-1])
+        instance = self.get_instance_on('C')
+        for n in result.copy():
+            if n.get_pure_tone('C') not in instance:
+                result.remove(n)
 
         return result
+
+    @property
+    def characterstic_tones(self):
+        """
+        :return: 调式的特征音
+
+        比较小调/大调调式和其它调式的特征音关系，将有差异的音符与主音对应的音程输出
+
+        dominant_tones也是characterstic_tones的一部分
+        """
+
+        if self == MinorScale():
+            return self.dominant_tones + [Interval(3, -1), Interval(7, -1)]
+        elif self == MajorScale():
+            return self.dominant_tones
+
+        father_mode = self.father_scale.mode
+        mode = self.mode
+        d = np.array(mode) - np.array(father_mode)
+        d_args = np.argwhere(np.sign(d) != 0)
+        final = self.dominant_tones
+        for arg in d_args:
+            i = Interval.from_location(self.mode[arg[0]], target_var=arg[0])
+            if i not in final:
+                final.append(i)
+
+        return final
 
     @property
     def name(self):
@@ -226,16 +262,16 @@ class Tonality:
         return mode_names.get(self.mode, class_name)
 
     def get_chord_func(self, index: int):
-        c = self.get_chord(index, root='C')
+        c = self.get_chord(index, root='C', with_7=False)
+        c7 = self.get_chord(index, root='C')
         pt = c.pure_tones
         pt3 = pt[:3]
 
-        if index == 4 and c.type == DOMINANT:
+        if index == 4 and c7.type in (DOMINANT, AUGMENTED):
             return 'D'
-        print(c.name)
 
         t = '' if self.father_scale == MajorScale() else 'm'
-        features = map(lambda x: x.get_pure_tone('C'), self.feature_tones)
+        features = map(lambda x: x.get_pure_tone('C'), self.dominant_tones)
         if set(features) & set(pt3) != set():
             return 'SD' + t
         else:
@@ -307,9 +343,9 @@ class MixolydianScale(Tonality):
         super(MixolydianScale, self).__init__(mixolydian_mode)
 
 
-class PhygianScale(Tonality):
+class PhrygianScale(Tonality):
     def __init__(self):
-        super(PhygianScale, self).__init__(phygian_mode)
+        super(PhrygianScale, self).__init__(phrygian_mode)
 
 
 class LocrianScale(Tonality):
@@ -366,9 +402,10 @@ class Interval:
         try:
             if self.location == other.location:
                 return True
+            else:
+                return False
         except AttributeError:
             return False
-        return False
 
     def __str__(self):
         return self.name
@@ -391,7 +428,7 @@ class Interval:
         return self + (-other)
 
     @staticmethod
-    def from_string(name: str):
+    def from_name(name: str):
         """
         :param name: 音程名
         :return: Interval类
@@ -418,9 +455,9 @@ class Interval:
     @staticmethod
     def from_location(location: int, target_var=None):
         law = ionian_mode + tuple([t + 12 for t in ionian_mode])
-        arr_d = np.array(law) - (location % len(law))
+        arr_d = np.array(law) - (location % 24)
         nearest = target_var if target_var else np.argmin(np.abs(arr_d))
-        delta = -arr_d[nearest]
+        delta = -arr_d[nearest % len(arr_d)]
         return Interval(nearest + 1, delta)
 
     @staticmethod
@@ -453,7 +490,7 @@ def get_interval(chord_type: str):
     return tuple(initial), locations
 
 
-i5_circle = [Interval.from_location((Interval(5).location * l) % 12) for l in range(12)]
+i5_circle = [Interval.from_location((Interval(5).location * lo) % 12) for lo in range(12)]
 
 
 class Chord:
@@ -466,12 +503,16 @@ class Chord:
         :key add: 加音符
         :key sus: 挂和弦
         :key others: 延伸音(Tension)，例如b5,b9,#9,#11,b13，可以是Interval组成的元组，也可以是单个Interval
+        :key avoid_tones: 是否避免音检测，默认True
 
-        :raise AttributeError: args为空时
+        :raise AttributeError: args为空
         :raise Exception: 乐理错误
 
         用于生成一个和弦
         """
+
+        if len(root) == 2 and root[-1] in ('#', 's'):
+            root = phonic[(phonic.index(root[0]) + 1) % 12] + 'b'
 
         self.interval = [Interval(1), Interval(3), Interval(5)]
         self.omit_3 = 5 in args
@@ -525,7 +566,7 @@ class Chord:
 
             for o in others_:
                 if isinstance(o, str):
-                    o = Interval.from_string(o)
+                    o = Interval.from_name(o)
                 if not isinstance(o, Interval):
                     raise Exception('非法音程类')
 
@@ -538,7 +579,7 @@ class Chord:
                 if end:
                     continue
 
-                if o.location % 12 in avoid_locations:
+                if o.location % 12 in avoid_locations and kwargs.get('avoid_tones', True):
                     warnings.warn(f"存在避免音：{Interval.from_location(o.location - 1)}"
                                   f"与延伸音{o}构成小九度音程，可能会使和弦不和谐")
 
@@ -702,6 +743,8 @@ class Chord:
         ---------
 
         该运算不满足交换律，即``a.roughly_equals(b)``不等价于``b.roughly_equals(a)``
+
+        aug(7)和dom(7)被视为同一类
         """
         if not isinstance(other, Chord):
             raise TypeError(f"不支持Chord类与{type(other)}的相等比较")
@@ -714,6 +757,11 @@ class Chord:
 
         sct = get_chord_tones(self)
         otct = get_chord_tones(other)
+        # aug7与dom7被视为同一类
+        exist_7th = self.has_7 or other.has_7
+        intersec = {0, 4, 10} if exist_7th else {0, 4}
+        if sct & otct == intersec and 7 in sct and 8 in otct or 8 in sct and 7 in otct:
+            return True
 
         return sct.issubset(otct)
 
@@ -795,15 +843,17 @@ class Chord:
             kwargs['others'].append(Interval(5, -1))
 
         surfix = name[primary.span()[1]:]
-        for item in re.findall('([sus|add]\d+)', surfix):
-            result = re.match('([sus|add])(\d+)', item)
+        for item in re.findall('([a-z]+\d+)', surfix):
+            result = re.match('(sus|add)(\d+)', item)
+            if result is None:
+                continue
             kwargs[result.group(1)] = int(result.group(2))
 
         others_surfix = surfix[re.match('([a-z]+\d+)*', surfix).span()[1]:]
         try:
             others_result = re.match('\(([^)]+)\)', others_surfix).group(1).split(',')
             for n in others_result:
-                kwargs['others'].append(Interval.from_string(n))
+                kwargs['others'].append(Interval.from_name(n))
         except AttributeError:
             pass
 
@@ -814,7 +864,8 @@ class Chord:
 
     @property
     def span(self):
-        _5th_locs = tuple(map(get_5th_circle_location, self.pure_tones))
+        root_loc = get_5th_circle_location(self.root)
+        _5th_locs = tuple(map(lambda x: get_5th_circle_location(x) - root_loc, self.pure_tones))
         return max(_5th_locs) - min(_5th_locs)
 
     @staticmethod
@@ -876,7 +927,7 @@ class Chord:
             interval_set.remove(i7)
             for x in range(9, 14, 2):
                 i = Interval(x).location % 12
-                if not i in interval_set:
+                if i not in interval_set:
                     break
                 num = [x]
                 interval_set.remove(i)
@@ -893,7 +944,7 @@ class Chord:
         others = ()
         for x in (13, 5, 9, 11):
             for y in (-1, 0, 1):
-                if (x, y) in ((11, -1), (13, 1)):  # b11和#13严格上不允许存在
+                if (x, y) in ((11, -1), (13, 1)):  # b11和#13不允许存在
                     continue
 
                 i = Interval(x, y)
@@ -904,13 +955,13 @@ class Chord:
         sus = None
         add = None
         left_tones = []
-        # 如果3音不存在于原来的音程集合里，可以允许sus
-        give_sus = not Interval(3).location in initial_interval_set
+        # 如果3音不存在于原来的音程集合里，判定sus
+        with_sus = not Interval(3).location in initial_interval_set
 
         for x in (2, 4, 6, 9, 11, 13):
             i = Interval(x).location
             if i in interval_set:
-                if give_sus:
+                if with_sus:
                     sus = x
                     interval_set.remove(i)
                     continue
@@ -928,7 +979,7 @@ class Chord:
         return final, (set(final.pure_tones) - set(tones), left_tones)
 
 
-def secondary_dominant_tendency(dominant_chord: Chord, tonic: str, tonality: Tonality = MajorScale()):
+def dominant_resolver(dominant_chord: Chord, tonic: str, tonality: Tonality = MajorScale()):
     """
     :param dominant_chord: 属和弦
     :param tonic: 位于音调
@@ -1025,41 +1076,13 @@ tonality_priorities = [
     MajorScale(),
     MinorScale(),
     HarmonicMinorScale(),
-    Tonality(mixolydian_mode),
+    LydianScale(),
     MelodicMinorScale(),
-    Tonality(dorian_mode),
-    Tonality(lydian_mode),
-    Tonality(phygian_mode),
-    Tonality(locrian_mode),
+    DorianScale(),
+    PhrygianScale(),
+    MixolydianScale(),
+    LocrianScale(),
 ]
-
-
-def get_func_strength(tonic: str, chord: Chord, tonality: Tonality = MajorScale()):
-    """
-    :param tonic: 调
-    :param chord: 和弦
-    :param tonality: 调式
-    :return: 返回该调内该和弦的功能和强度，对应chord_func的索引：T为主，M为中（可主可属），SD为下属，D为属，-1为未知
-    """
-    if chord.tritone_intervals:
-        return 3  # D
-
-    try:
-        level = tonality.mode.index(Interval.get_location(tonic, chord.lowest)) + 1
-    except ValueError:
-        return -1  # Unknown
-
-    if level in (2, 4):
-        return 2  # SD
-    elif level in (5, 7):
-        return 3  # D
-    elif level in (6, 1):
-        return 0  # T
-    elif level == 3:
-        return 1  # M
-    else:
-        return -1  # Unknown
-
 
 function_tense = {'T': 0, 'SD': 1, 'SDm': 2, 'D': 3}
 
@@ -1069,6 +1092,20 @@ class ChordProgressionNode:
 
     def __init__(self, chord: Chord = None, next=None, bpm=None, duration=2,
                  tonic: str = 'C', tonality: Tonality = MajorScale()):
+        """
+        :param chord: 和弦
+        :param next: 下一节点
+        :type next: ChordProgressionNode
+        :param bpm: tempo
+        :param duration: 持续拍数
+        :param tonic: 主音
+        :param tonality: 调性
+
+        和弦进行节点
+        """
+        if next:
+            assert isinstance(next, ChordProgressionNode), "Next node must be a ChordProgressionNode Object!"
+
         self.chord = chord
         self.next = next
         self.tonic = tonic
@@ -1083,10 +1120,8 @@ class ChordProgressionNode:
         if self.chord.root in ins:
             tonality_chord = self.tonality.get_chord(ins.index(self.chord.root), with_7=self.chord.has_7, instance=ins)
             if not self.chord.roughly_equals(tonality_chord) and not tonality_chord.roughly_equals(self.chord):
-                print('REQUIRE ADAPTION')
                 self.adapt_to_tonality()
         else:
-            print('REQUIRE ADAPTION')
             self.adapt_to_tonality()
 
         # 别改成ins，ins是先前的tonality生成的
@@ -1110,7 +1145,28 @@ class ChordProgressionNode:
         """
         :return: 该节点是否完整拥有本节点的和弦和下一个节点的和弦
         """
-        return self.next is not None and self.chord is not None and self.next.chord is not None
+        return self.next is not None and all((self.chord, self.next.chord))
+
+    def is_dominant_cadence(self, consider_tritone_sub=False, additional=True):
+        if not self.is_complete_motion:
+            return False
+
+        def legal_tritone_substitution():
+            tonic = self.next.chord.root
+            t4 = Interval(4).get_pure_tone(tonic)
+            t7 = Interval(7).get_pure_tone(tonic)
+            tritones = self.chord.tritones
+
+            return (t4, t7) in tritones or (t7, t4) in tritones
+
+        if self.is_dominant_motion:
+            if self.chord.has_7 and self.chord.type not in (DOMINANT, AUGMENTED):
+                return False
+            return True and additional
+        elif consider_tritone_sub:
+            return legal_tritone_substitution() and additional
+        else:
+            return False
 
     def adapt_to_tonality(self):
         """
@@ -1123,15 +1179,28 @@ class ChordProgressionNode:
         if 5 in self.chord.args:
             return
 
+        original_instance = self.tonality.get_instance_on(self.tonic)
+        outer_tones = set(self.chord.chord_tones) - set(original_instance)
+        if not outer_tones:
+            return
+
         # 如果为属和弦且根音在调内，先判断不是附属和弦再判断借用其它调式和弦
         if self.chord.root in self.tonality.get_instance_on(self.tonic) and \
                 Interval(7, -1) in self.chord.interval and self.is_dominant_motion:
             return
 
-        for tonality in tonality_priorities:
-            instance = tonality.get_instance_on(self.tonic)
+        if self.tonality == MajorScale():
+            priorities = tonality_relations[ionian_mode] + tonality_relations[aeolian_mode]
+        else:
+            priorities = tonality_relations[aeolian_mode] + tonality_relations[ionian_mode]
+
+        priorities.remove(mixolydian_mode)
+
+        for mode in priorities:
+            tonality = Tonality(mode)
+            ctones = set(map(lambda x: x.get_pure_tone(self.tonic), tonality.characterstic_tones))
             try:
-                if set(instance).issuperset(set(self.chord.chord_tones)):
+                if outer_tones.issubset(ctones):
                     self.tonality = tonality
                     break
             except ValueError:
@@ -1143,14 +1212,20 @@ class ChordProgressionNode:
         if not self.is_complete_motion:
             return 0, '/', '/'
 
-        this = self.tonality.get_chord_func(self.index_in_tonality)
-        nex = self.next.tonality.get_chord_func(self.next.index_in_tonality)
+        index_this = self.index_in_tonality
+        index_nex = self.next.index_in_tonality
+        if self.has_resolved_tritones or self.is_dominant_cadence(True):
+            this = 'D'
+        else:
+            this = self.tonality.get_chord_func(index_this)
+
+        nex = self.next.tonality.get_chord_func(index_nex)
 
         return function_tense.get(nex) - function_tense.get(this), this, nex
 
-    def get_dominant_data(self, inter: int = 1):
+    def get_steps(self, inter: int = 1):
         """
-        属进行信息
+        前后和弦的声部步进关系, inter为步进数，1为半音，2为全音
         """
         tends = []
         tends_i = []
@@ -1171,14 +1246,14 @@ class ChordProgressionNode:
                 if (spt, opt) in tends:
                     continue
 
-                if 0 < Interval.get_location(spt, opt) <= inter:
+                if Interval.get_location(spt, opt) == inter:
                     tends.append((spt, opt))
                     tends_i.append((sptl, optl))
                     level += 1  # 与主和弦相邻半音那么加一
                     up += 1
                     if opt == self.next.chord.root:
                         level += 0.5  # 导音再加0.5
-                elif 12 > Interval.get_location(spt, opt) >= 12 - inter:
+                elif Interval.get_location(spt, opt) == 12 - inter:
                     tends.append((spt, opt))
                     tends_i.append((sptl, optl))
                     level += 1  # 与主和弦相邻半音那么加一
@@ -1216,48 +1291,60 @@ class ChordProgressionNode:
 
         G7 -> 3+2+0.5=5.5
         """
-        return self.get_dominant_data()[0]
+        return self.get_steps()[0]
 
     @property
-    def resolved_tritones(self):
+    def resolved_tritones(self, tonality: Tonality = None):
         """
-        :return: 下一和弦解决了的三全音，
+        :return: 下一和弦解决了的三全音，调式由tonality决定，默认下一节点的tonality
         """
         if not self.is_complete_motion:
             return []
 
-        # 预计算 tones 数据，只计算一次
-        tones = self.get_dominant_data()[3]
         resolved_tritones = []
 
         # 提前返回 False，避免不必要的遍历
         tritones = self.chord.tritones
         if not tritones:
             return resolved_tritones
+
+        # 调整tonality参数
+        if not tonality:
+            tonality = self.tonality.father_scale
+        else:
+            tonality = tonality.father_scale
+
+        # 预计算 tones 数据，只计算一次
+        tones = self.get_steps()[3]
+        tones2 = []
+        if tonality == MinorScale():
+            tones2 = self.get_steps(inter=2)[3]
+
         for tritone1, tritone2 in tritones:
-            next_tones = self._find_resolved_tritones(tones, tritone1, tritone2)
+            next_tones = self._find_resolved_tritones(tones+tones2, tritone1, tritone2)
 
             # 若没有找到两个音符解决三全音，继续
-            if len(next_tones) < 2:
+            length = len(next_tones)
+            if length < 2:
                 continue
 
-            # 检查音程是否为 4 或 8 半音
-            if self._is_valid_tritone_resolution(next_tones[0], next_tones[1]):
-                resolved_tritones.append(((tritone1, tritone2), next_tones))
+            # 检查音程，可能有多解
+            for x in range(length):
+                for y in range(x+1, length):
+                    # 对于下一和弦的调性而言是有效的，故使用self.next.tonality.father_scale
+                    if self._is_valid_tritone_resolution(next_tones[x], next_tones[y], self.next.tonality.father_scale):
+                        resolved_tritones.append(((tritone1, tritone2), (next_tones[x], next_tones[y])))
 
         return resolved_tritones
 
     @property
     def has_resolved_tritones(self):
         """
-        是否所有三全音都被解决
+        是否有三全音且被解决（大调）
         """
         if not self.is_complete_motion:
             return False
-        tritones = self.chord.tritones
-        if len(tritones) == 0:
-            return False
-        return set(map(lambda x: x[0], self.resolved_tritones)).issuperset(tritones)
+        return len(self.resolved_tritones) != 0
 
     @staticmethod
     def _find_resolved_tritones(tones, tritone1, tritone2):
@@ -1267,14 +1354,23 @@ class ChordProgressionNode:
             # 如果音符是三全音对之一，记录解消后的音符
             if first_tone in (tritone1, tritone2):
                 next_tones.append(next_tone)
+
         return tuple(next_tones)
 
-    @staticmethod
-    def _is_valid_tritone_resolution(tone1, tone2):
+    def _is_valid_tritone_resolution(self, tone1, tone2, tonality: Tonality):
         """检查两个音符是否符合三全音解消的要求（大三度或小三度）"""
+        # 至少得有一个属于导音
+        if self.next.tonic not in {tone1, tone2}:
+            return False
+
         interval = Interval.get_location(tone1, tone2)
         # 解消要求：上行一个、下行一个，或反向解消，结果必须为 4 或 8 半音
-        return interval in (4, 8)
+        if tonality == MajorScale():
+            return interval in (4, 8)
+        elif tonality == MinorScale():
+            return interval in (3, 9)
+        else:
+            return False
 
     def time(self, bpm):
         """
@@ -1291,9 +1387,17 @@ class ChordProgressionGroup:
     """和弦组，采用单向链表"""
 
     def __init__(self, initial_tonic: str = 'C',
-                 bpm: int = 120,
+                 bpm=120,
                  beat_per_column: int = 4,
                  initial_tonality: Tonality = MajorScale()):
+        """
+        :param initial_tonic: 初始主音
+        :param bpm: Tempo，建议整数
+        :param beat_per_column: 每小节拍数
+        :param initial_tonality: 初始调式
+
+        和弦组，采用单向链表
+        """
         self.head = ChordProgressionNode(tonic=initial_tonic, tonality=initial_tonality)  # 头节点
         self.tonic = initial_tonic
         self.tonality = initial_tonality
@@ -1302,6 +1406,7 @@ class ChordProgressionGroup:
         self.beat_per_column = beat_per_column
 
     def create(self, l, order):
+        """创建和弦组"""
         if order:
             self.create_tail(l)
         else:
@@ -1309,8 +1414,13 @@ class ChordProgressionGroup:
 
     def create_tail(self, l):
         """尾插法"""
+        p = self.get_node(self.length - 1)
         for item in l:
-            self.append(item)
+            if item is None:
+                p.duration += 1
+                continue
+            p.next = ChordProgressionNode(item, duration=1, tonic=self.tonic, tonality=self.tonality, bpm=self.bpm)
+            p = p.next
 
     def create_head(self, l):
         """头插法"""
@@ -1337,6 +1447,9 @@ class ChordProgressionGroup:
 
     def get_node(self, i):
         """读取和弦进行组的第i个和弦节点"""
+        if i == -1:
+            return self.head
+
         p = self.head.next
         j = 0
         while j < i and p is not None:
@@ -1535,7 +1648,7 @@ class ChordProgressionGroup:
         root = None
         length = 0
 
-        l = 0
+        loc = 0
 
         while start_node.next is not None:
             this = start_node.chord.lowest
@@ -1556,15 +1669,17 @@ class ChordProgressionGroup:
                     break
 
             start_node = start_node.next
-            l += 1
+            loc += 1
 
         if start_node.next is None:
             return
 
-        return l - length, tuple(pedal_list)
+        return loc - length, tuple(pedal_list)
 
-    def find_251_motion(self, start_i: int = 0):
+    def find_251_motion(self, start_i: int = 0, consider_tritone_sub=False, strict_tritone_resol=False):
         """
+        :param strict_tritone_resol: 必须是大调的三全音解决
+        :param consider_tritone_sub: 考虑三全音替代
         :param start_i: 起始寻找位置
         :return: 251和弦进行的开始索引和I和弦的根音以及调式
         """
@@ -1579,20 +1694,47 @@ class ChordProgressionGroup:
             I = start_node.next.next.chord  # 1
 
             # ...
-            if start_node.is_dominant_motion and start_node.next.is_dominant_motion:  # 251是两次属进行
-                if V.has_7 and V.type != DOMINANT \
-                        or I.type != MAJOR:  # 251要求结尾是主，中间是属
-                    start_node = start_node.next
-                    loc += 1
-                    continue
+            def legal_tritone_substitution():
+                tonic = I.root
+                t4 = Interval(4).get_pure_tone(tonic)
+                t7 = Interval(7).get_pure_tone(tonic)
+                tritones = V.tritones
 
-                tonality_guess = [MajorScale(), MinorScale()]
-                for ton in tonality_guess:
-                    tonality_chord = ton.get_chord(1, root=I.root, with_7=II.has_7)
-                    if tonality_chord.roughly_equals(II) or \
-                            II.roughly_equals(tonality_chord):
-                        ii_v_relation = ton
-                        return loc, (II, V, I), ii_v_relation
+                return ((t4, t7) in tritones or (t7, t4) in tritones) and Interval(2).get_pure_tone(tonic) == II.root
+
+            if consider_tritone_sub:
+                lts = legal_tritone_substitution()
+
+            def check_II_V_motion():
+                if start_node.is_dominant_motion:
+                    V_sub = False
+                elif consider_tritone_sub and lts:
+                    V_sub = True
+                else:
+                    return None, False
+
+                for tonl in tonality_priorities:
+                    V_target = tonl.get_chord(4, root=I.root, with_7=V.has_7)
+                    V_target = get_tritone_substitution(V_target) if V_sub else V_target
+                    if tonl.get_chord(1, root=I.root, with_7=II.has_7).roughly_equals(II) \
+                            and V_target.roughly_equals(V):
+                        return tonl, V_sub
+                return None, False
+
+            def check_V_I_motion():
+                if consider_tritone_sub:
+                    return start_node.next.is_dominant_cadence(True,
+                                                               additional=Interval(2).get_pure_tone(I.root) == II.root)
+                else:
+                    return start_node.next.is_dominant_cadence()
+
+            ii_v_relation, is_sub = check_II_V_motion()
+            if ii_v_relation and check_V_I_motion() and not \
+                    (strict_tritone_resol and not ChordProgressionNode(V, next=ChordProgressionNode(I))
+                            .has_resolved_tritones):  # 251是两次属进行
+                start_node.tonality = ii_v_relation
+                start_node.next.tonality = ii_v_relation
+                return loc, (II, V, I), ii_v_relation, is_sub
 
             start_node = start_node.next
             loc += 1
@@ -1670,11 +1812,10 @@ class ChordProgressionGroup:
 
         self.call_chain(att, start, end)
 
-    def adapt_group_tonic(self, start=0, end=None, tonality=MajorScale(), inaccuracy_limit=0.53, change_range=16):
+    def adapt_group_tonic(self, start=0, end=None, tonality=MajorScale(), inaccuracy_limit=0.65, change_range=16):
         """
         :param tonality: 调性
-        :param inaccuracy_limit: 主音的不准确度阈值，区间(0,1)，值越大越不易改变调性
-        :param change_range: 缓冲范围
+        :param limit: 改变主音的进行数量阈值, 区间(0,1)
 
         检测调式主音的改变并微调
         """
@@ -1791,12 +1932,13 @@ class ChordProgressionGroup:
                                   initial_tonality=data.get('tonality'),
                                   beat_per_column=data.get('bpc'),
                                   bpm=data.get('bpm'))
-
+        node = g.head
         for item in list(data['data']):
-            g.append(item[0], tonality=item[1],
-                     tonic=item[2],
-                     beats=item[3],
-                     bpm=item[4])
+            node.next = ChordProgressionNode(item[0], tonality=item[1],
+                                             tonic=item[2],
+                                             beats=item[3],
+                                             bpm=item[4])
+            node = node.next
 
         return g
 
@@ -1807,16 +1949,22 @@ class Motion251Group(ChordProgressionGroup):
     """
 
     def __init__(self, as_1, tonality: Tonality = MajorScale(), ii_with_7=False, v_tensions=None,
+                 v_with_7=False,
+                 v_aug=False,
                  i_with_7=False):
         super().__init__()
         self.create_tail(
             (tonality.get_chord(2 - 1, root=as_1, with_7=ii_with_7),
-             Chord(tonality.get_instance_on(as_1)[5 - 1], DOMINANT, 7, others=v_tensions),
+             Chord(tonality.get_instance_on(as_1)[5 - 1], AUGMENTED if v_aug else DOMINANT, 7 if v_with_7 else 0,
+                   others=v_tensions),
              Chord(as_1, MAJOR, 7 if i_with_7 else 0))
         )
 
     @staticmethod
-    def get_next_51(chord: Chord, tonality: Tonality = MajorScale(), with_7=False) -> ChordProgressionGroup:
+    def get_next_51(chord: Chord, tonality: Tonality = MajorScale(), with_7=False):
+        """
+        获得ii和弦对应的v和i和弦
+        """
         g = ChordProgressionGroup()
         t2 = Interval(4).get_pure_tone(chord.root)
         g.create_tail(
@@ -1827,15 +1975,25 @@ class Motion251Group(ChordProgressionGroup):
 
 
 class ChordIterator:
+    """
+    ChordProgressionGroup的迭代器
+    """
+
     def __init__(self, group: ChordProgressionGroup):
         self.current_node = group.head
+        self.pos = 0
 
     def __next__(self):
         self.current_node = self.current_node.next
+        self.pos += 1
         return self.current_node.chord
+
+    def __iter__(self):
+        self.__next__()
 
     def next_node(self):
         self.current_node = self.current_node.next
+        self.pos += 1
         return self.current_node
 
     @property
@@ -1851,7 +2009,7 @@ class SecondaryDominantGroup(ChordProgressionGroup):
     def __init__(self, ori: Chord, at_tone, tonality=MajorScale()):
         super().__init__()
         dom = Chord(ori.root, DOMINANT, 7, kwargs=ori.kwargs)
-        solve = secondary_dominant_tendency(dom, at_tone, tonality)
+        solve = dominant_resolver(dom, at_tone, tonality)
 
         self.create_tail((
             ori,
@@ -1861,36 +2019,22 @@ class SecondaryDominantGroup(ChordProgressionGroup):
 
 
 def get_tritone_substitution(dominant_chord: Chord):
-    """获取一个属和弦对应的三全音代理，根音互相在五度圈中成180度"""
-    if dominant_chord.tritones.__len__() <= 0:
-        raise Exception("非属和弦不存在对应的里和弦")
+    """获取一个和弦对应的三全音代理，根音互相在五度圈中成180度"""
     return Chord(Interval(5, -1).get_pure_tone(dominant_chord.root),
                  dominant_chord.type,
                  *dominant_chord.args,
                  **dominant_chord.kwargs)
 
 
+def spawn_group(string: str, split_sign: str = ' - ', **options):
+    g = ChordProgressionGroup(**options)
+    g.create_tail(Chord.from_name(single) for single in string.split(split_sign))
+    return g
+
+
 if __name__ == '__main__':
-    group = ChordProgressionGroup()
-
-    group.create_tail([
-        Chord.from_name('Cmaj7'),
-        Chord.from_name('Em7'),
-        Chord.from_name('Fmaj7'),
-        Chord.from_name('G7'),
-        Chord.from_name('Cmaj7'),
-        Chord.from_name('Em7'),
-        Chord.from_name('Fmaj7'),
-        Chord.from_name('G7'),
-    ])
-
-    group.change_tonic('Db', 4)
-    group.get(0)
-    group.change_tonic('C', change_chord=False, change_chord_type=False)
+    group = spawn_group("Fm6 - Cmaj7", initial_tonality=MajorScale())
+    group.adapt_group_tonality()
     group.display()
-    group.adapt_group_tonic(change_range=4)
-
-    p = group.head.next
-    while p is not None:
-        print(p.tonic)
-        p = p.next
+    print(group.head.next.chord.tritones)
+    print(group.head.next.resolved_tritones)
