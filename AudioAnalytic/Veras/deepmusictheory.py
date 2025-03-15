@@ -1,4 +1,9 @@
 import tensorflow as tf
+from keras import Sequential
+from keras.src.layers import Bidirectional, Reshape, Conv1D, MaxPooling1D, MultiHeadAttention, GlobalAveragePooling1D, \
+    Conv2D, MaxPooling2D
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Input, Dense, LSTM, Dropout
 import music_theory2 as music_theory
 import os
 import numpy as np
@@ -6,10 +11,11 @@ import numpy as np
 file_chord_root = None
 file_chord_feature = None
 filepath_1 = "networks/chord_root_model.h5"
-filepath_2 = "C:/Users/Administrator/PycharmProjects/Dikaer/AudioAnalytic/Veras/networks/chord_feature_model.h5"
-filepath_2_best = "C:/Users/Administrator/PycharmProjects/Dikaer/AudioAnalytic/Veras/networks/chord_feature_model_best.h5"
+filepath_2 = "E:/PycharmProjects/Dikaer/AudioAnalytic/Veras/networks/chord_feature_model.h5"
+filepath_2_best = "E:/PycharmProjects/Dikaer/AudioAnalytic/Veras/networks/chord_feature_model_best.h5"
 
-limit = 0.999
+limit = 0.85
+
 
 
 def translate_to_music_theory(input_) -> tuple:
@@ -42,32 +48,43 @@ model_chord_root_type.compile(optimizer='adam',
 
 ###
 
+# 输入层，88键FFT
+inputs = Input(shape=(None, 88))  # (batch, timesteps, 88)
 
-# 输入层
-input_stft = tf.keras.Input(shape=(88,))
+# 调整形状为 (batch, timesteps, 88, 1) → 适配 Conv2D
+x = Reshape((-1, 88, 1))(inputs)  # 形状变为 (batch, timesteps, 88, 1)
 
-# 隐藏层
-hidden_layer = tf.keras.layers.Dense(128, activation='relu')(input_stft)
+# Conv2D 提取时频特征（频域不降维）
+conv_filters = 64
+x = Conv2D(
+    filters=conv_filters,
+    kernel_size=(4, 5),  # 时间维度卷积核=4（捕捉长时依赖），频域卷积核=5（相邻5个半音），大三度
+    activation="relu",
+    padding="same"         # 保持时间、频域维度不变
+)(x)  # 输出形状: (batch, timesteps, 88, 64)
 
-# # 隐藏层
-hidden_layer2 = tf.keras.layers.Dense(256, activation='relu')(hidden_layer)
+# MaxPooling2D 仅压缩时域（频域维度保持88键）
+x = MaxPooling2D(pool_size=(2, 1))(x)  # 输出形状: (batch, timesteps//2, 88, 64)
 
-# 输出层
-tones_outputs = tf.keras.layers.Dense(24, activation='sigmoid', name='tones_output')(hidden_layer2)
-lowest_outputs = tf.keras.layers.Dense(12, activation='softmax', name='lowest_output')(hidden_layer2)
+# 调整形状适配 Transformer
+x = Reshape((-1, 88 * conv_filters))(x)  # 合并频域和通道 → (batch, timesteps//2, 88*64)
+x = Dense(128, activation="relu")(x)  # 降维到适配注意力层
+
+# Transformer 建模时间依赖（频域信息完整保留）
+x = MultiHeadAttention(num_heads=4, key_dim=32)(x, x)  # 输出形状: (batch, timesteps//2, 128)
+x = GlobalAveragePooling1D()(x)  # 聚合时间维度 → (batch, 128)
+
+tones_outputs = Dense(24, activation='sigmoid', name='tones_output')(x)
+lowest_outputs = Dense(12, activation='softmax', name='lowest_output')(x)
 
 # 模型构建
-model_chord_feature = tf.keras.Model(inputs=[input_stft], outputs=[tones_outputs, lowest_outputs])
+model_chord_feature = Model(inputs=inputs, outputs=[tones_outputs, lowest_outputs])
 
 # 编译模型
-# 二元化的tones，因为它非1即0，loss函数使用binary_crossentropy
 model_chord_feature.compile(optimizer='adam',
                             loss={'tones_output': tf.keras.losses.binary_crossentropy,
-                                  'lowest_output': tf.keras.losses.binary_crossentropy}, )
-# metrics=[tf.keras.metrics.categorical_accuracy])
-# fft: [13, 0, 0, 0, 0, 0, 34, 12, 0, 0, ...] (88 items)
-# chord: [0 0 1 0 0 1 0 0 0 1 0 ...] (24 items)
-# lowest: [0 0 0 0 0 1 0 0 0 0 0] (12 items)
+                                  'lowest_output': tf.keras.losses.binary_crossentropy},
+                            metrics=["accuracy"])
 
 model_chord_feature_best = None
 
