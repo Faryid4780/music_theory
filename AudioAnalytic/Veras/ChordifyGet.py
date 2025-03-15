@@ -1,19 +1,16 @@
-import logging
 import pickle
 import re
 from os import mkdir, remove
 from os.path import exists
 from time import sleep
 
-import numpy as np
 import requests
 import yt_dlp as youtube_dl
 from bs4 import BeautifulSoup
 from pydub import AudioSegment
-
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 
 import music_theory2 as mt
 from AudioAnalyticSTFTSave import NewMainProgram as NewALMainProgram
@@ -34,7 +31,7 @@ def fix_string(input_: str):
         '?': ';',
         '"': "'",
         '|': ';',
-        ':': ';'
+        ':': '--'
     }
 
     for old, new in replacements.items():
@@ -42,65 +39,31 @@ def fix_string(input_: str):
     return input_
 
 
-class TrainingLib:
-    """
-    训练库
-    """
-
-    def __init__(self, stft_filepath: str, override: bool = True):
-        self.stft_filename = stft_filepath
-        stft_file = open(stft_filepath, 'rb')
-        self.train_filename = stft_filepath.replace('.dat', '') + "_train_data.dat"
-        self.train_data = {}
-
-        if exists(self.train_filename) and not override:
-            self.train_file = open(self.train_filename, 'rb')
-            self.train_data = pickle.load(self.train_file)
-            self.train_file.close()
-
-        self.train_file = open(self.train_filename, 'wb')
-        self.stft_data = pickle.load(stft_file)
-        assert isinstance(self.stft_data, dict)
-        stft_file.close()
-
-        self.train_pickler = pickle.Pickler(self.train_file)
-        self.ks = np.array(tuple(self.stft_data.keys()))
-        # self.iset = set()
-        self.title_name = ""
-
-    def add(self, time_: float, chord: Chord):
-        """
-        :param time_: 时间刻
-        :param chord: 插入和弦
-        """
-        i = np.argmin(np.abs(self.ks - time_))
-        # if i in self.iset:
-        #     raise Exception("Repeat")
-        # self.iset.add(i)
-        if not self.ks[i] in self.train_data.keys():
-            self.train_data[self.ks[i]] = chord
-
-    def save(self):
-        """
-        保存训练库
-        """
-        self.train_pickler.dump(self.train_data)
-        self.train_file.close()
-
-
 class TrainingLibImproved:
     def __init__(self, path, override: bool = True):
         if override:
             self.f = open(path, 'wb')
+            self.data = None
         else:
             self.f = open(path, 'rb')
+            self.data = pickle.load(self.f)
 
-    def write_and_save(self, fft_chord_dict: tuple):
-        pickle.dump(fft_chord_dict, self.f)
+    def write_and_save(self, fft_chord_tupl: tuple, youtube_id:str, youtube_name:str, time_to_chord):
+        save = {'youtube_id': youtube_id, 'youtube_name': youtube_name, 'data': fft_chord_tupl, 'ttc': time_to_chord}
+        pickle.dump(save, self.f)
         self.f.close()
 
     def read_from(self) -> tuple:
-        return pickle.load(self.f)
+        return self.data['data']
+
+    def read_id(self) -> str:
+        return self.data['youtube_id']
+
+    def read_name(self) -> str:
+        return self.data['youtube_name']
+
+    def read_time_to_chord(self):
+        return self.data['ttc']
 
 
 proxies = {
@@ -109,38 +72,6 @@ proxies = {
 }
 
 YTDL_PATH = "youtube_downloaded"
-
-
-def _get_chord(root: str, ctype: str, numbers: str, lowest: str = None) -> Chord:
-    """3
-    :param root: 根音（非music_theory库规范）
-    :param ctype: 和弦类型
-    :param numbers: 几和弦
-    :returns: Chord
-    """
-    if len(root) == 2 and root[1] == "#":
-        root = mt.phonic[(mt.phonic.index(root[0]) + 1) % len(mt.phonic)]
-    mt_dict = {
-        'maj': mt.MAJOR,
-        'min': mt.MINOR,
-        'dim': mt.DIMISHED,
-        'aug': mt.AUGMENTED,
-        '': mt.DOMINANT
-    }
-    option = None
-    if len(ctype) > 3 or not mt_dict.get(ctype):
-        option = ctype[-3:]
-
-    lowest = root if not lowest else lowest
-    numbers = int(numbers) if numbers else 0
-
-    if not option:
-        return ChordSlash(*(root, mt_dict.get(ctype)), numbers, lowest=lowest)
-    else:
-        if len(ctype) > 3:
-            return ChordSlash(*(root, mt_dict.get(ctype[:3])), 0, *{option: numbers, 'lowest': lowest})
-        else:
-            return ChordSlash(*(root, mt.DOMINANT), 0, *{option: numbers, 'lowest': lowest})
 
 def get_youtube_id_from_api_url(url: str) -> str:
     """
@@ -168,29 +99,22 @@ def to_mt_chord(chord_name: str) -> Chord:
     match = re.match(r"([A-Ga-g][#b]?)(.*)", chord_name)
     if match:
         root = match.group(1)  # 根音
+        if root[-1] == "#":
+            root = mt.phonic[(mt.phonic.index(root[0]) + 1) % len(mt.phonic)]
         suffix = match.group(2)  # 和弦类型
-
         # 使用正则表达式分割suffix
-        suffix_match = re.search(r"([A-Za-z]+)(\d*)(/[A-Za-z]*)?$", suffix)
+        suffix_match = re.search(r":(.*)(/[A-Za-z]*)?$", suffix)
         if suffix_match:
-            letters = suffix_match.group(1)  # maj
-            numbers = suffix_match.group(2)  # 几和弦 (如果存在，否则None)
-            lowest = suffix_match.group(3)  # 最低音
-            lowest = lowest[1:] if lowest is not None else lowest
-
-            # 返回结果
-            return _get_chord(root, letters, numbers, lowest=lowest)
-        else:
-            suffix_match = re.search(r"(\d*)(/[A-Za-z]*)?$", suffix)
+            info = suffix_match.group(1).replace('min', 'm')  # 后缀
             lowest = suffix_match.group(2)  # 最低音
-            lowest = lowest[1:] if lowest is not None else lowest
-            # 属n和弦
-            return _get_chord(root, '', suffix_match.group(1), lowest=lowest)
+            lowest = lowest[1:] if lowest is not None else root
 
-    logging.warning("Invalid chord name format: " + chord_name)
+            c = Chord.from_name(root+info)
+            return ChordSlash(c.root, c.type, *c.args, **c.kwargs, lowest=lowest)
 
 
 windows_versions = (10, 8, 7)
+print(to_mt_chord('D:7'))
 
 
 class Main:
@@ -241,8 +165,11 @@ class Main:
             return
 
         # 定义下载选项
+
         ydl_opts = {
             'format': 'bestaudio/best',  # 下载最好的音频格式
+            'cookiesfrombrowser': ('chrome',),
+            'plugins': ['ChromeCookieUnlock'],
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
@@ -272,11 +199,11 @@ class Main:
         Analyse WAV File.
         """
         al = NewALMainProgram(self.wav_path, tuple(self.time_to_chord.keys()))
-        tl = TrainingLibImproved("stft_data\\" + self.title_name + ".dat")
-        recording = al.record()
+        tl = TrainingLibImproved("stft_data_modified\\" + self.title_name + ".dat")
+        recording = al.record(7, 1)
         chord_names = self.time_to_chord.values()
         chords = [to_mt_chord(chord) for chord in chord_names]
-        tl.write_and_save((recording, chords))
+        tl.write_and_save((recording, chords), self.video_id, self.title_name, self.time_to_chord)
 
     def __generate_headers(self):
         xn = "64" if self.system_xn == "64" else "86"
@@ -285,6 +212,7 @@ class Main:
             "Referer": self.chordify_url,
             "Accept-Language": "en-US,en;q=0.9",
         }
+
     def __next_headers(self):
         if self.chrome_version >= 97:
             self.chrome_version -= 1
@@ -297,31 +225,40 @@ class Main:
         使用requests库在不打开Chrome的情况下爬取数据
         """
 
+
         result = {}
         headers = self.__generate_headers()
         chordify = requests.get(self.chordify_url, proxies=proxies, headers=headers)
 
         options = Options()
+        options.add_argument("--headless")  # 开启无头模式
+        options.add_argument("--disable-blink-features=AutomationControlled")  # 禁用自动化特征
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])  # 隐藏自动化控制标志
+        options.add_experimental_option("useAutomationExtension", False)  # 禁用自动化扩展
+        # options.add_argument("--disable-gpu")  # 禁用 GPU（提高兼容性）
+        options.add_argument("--disable-features=LockProfileCookieDatabase")
+
+        options.add_argument(
+            f"user-agent={headers.get('User-Agent')}")
+
         if self.proxies:
             options.add_argument(f"--proxy-server={self.proxies['https']}")
 
-        service = Service(executable_path="chromedriver_130_0_6723_92.exe")
+        service = Service(executable_path="venv\\chromedriver_132_0_6834_111.exe")
 
         c = webdriver.Chrome(service=service, options=options)
         if not 200 <= chordify.status_code <= 299:
-            print("HTTP request failed, status code: " + str(chordify.status_code) + '\n' +
-                            chordify.text)
+            print("HTTP request failed, status code: " + str(chordify.status_code))
             print("Use Selenium instead")
-
 
             c.get(self.chordify_url)
             chordify = c.page_source
 
         chordify = chordify.text if not isinstance(chordify, str) else chordify
-
         soup = BeautifulSoup(chordify, 'html.parser')
         link_tag = soup.find('link', {'rel': 'preload', 'type': 'application/json'})
         self.title_name = fix_string(soup.title.string)
+        print('Title Name:',self.title_name)
 
         if link_tag:
             json_url = link_tag['href']
@@ -361,16 +298,20 @@ class Main:
         print("Tonality:", info.get("derivedKey"))
 
         chords = str(json_data.get("chords")).split("\n")
-        last_chord = None
-        st = None
-        et = None
+        last, ls, le = None, 0, 0
         for chord in chords:
             chord_data = chord.split(";")
             if len(chord_data) != 4:
                 continue
             _, chord_type, start_time, end_time = chord_data
+            start_time = float(start_time)
+            end_time = float(end_time)
+            if chord_type == last:
+                result.pop((ls, le))
+                start_time = ls
 
-            result[(float(start_time), float(end_time))] = chord_type.split('/')[0]  # 忽略转位
+            result[(start_time, end_time)] = chord_type
+            last, ls, le = chord_type, start_time, end_time
 
         return result
 
@@ -416,18 +357,41 @@ urls = [
     # "https://chordify.net/chords/sayonara-you-ling-wu-ren-jie-zhi-zuo-xuan-minekomanma-dian-jing",
     # "https://chordify.net/chords/xue-xiaono-qi-bu-ke-si-yi-tao-qinchinoi-original-tao-qinchinoi-momone-chinoi",
     # "https://chordify.net/chords/zael-songs/moonlight-sonata-beethoven-cover-chords",
-    # "https://chordify.net/chords/debussy-clair-de-lune-rousseau"
+    # "https://chordify.net/chords/debussy-clair-de-lune-rousseau",
+    # "https://chordify.net/chords/lab-01-tao-qinchinoi-inamiko-cover-tao-qinchinoi-momone-chinoi",
+    # "https://chordify.net/chords/the-caretaker-songs/it-s-just-a-burning-memory-chords?version=youtube:wPOF5FgG3DU",
+    # "https://chordify.net/chords/the-caretaker-songs/libet-s-delay-chords",
+    # "https://chordify.net/chords/the-caretaker-songs/all-you-are-going-to-want-to-do-is-get-back-there-chords",
+    # "https://chordify.net/chords/the-caretaker-songs/we-don-t-have-many-days-chords",
+    # "https://chordify.net/chords/the-caretaker-songs/childishly-fresh-eyes-chords",
+    # "https://chordify.net/chords/qian-lian-wan-hua-fang-naibgm-tooryanse-gan-mei-feng-lai-instver-piano-aroba-gemu-qupiano-yan-zou",
+    # "https://chordify.net/chords/shugaten-op-candy-a-mine-kazuma-ks",
+    # "https://chordify.net/chords/senren-banka-ost-koi-kou-enishi-piano-version-piano-transcription-jnundead-anime-on-piano",
+    # "https://chordify.net/chords/qian-lian-wan-hua-ost-shenmo-xinmo-piano-alova-galgame-on-piano",
+    # "https://chordify.net/chords/qian-lian-wan-hua-ost-tooryanse-gan-mei-feng-lai-quietver-piano-alova-ch-aroba",
+    # "https://chordify.net/chords/senren-banka-op-koi-kou-enishi-full-ver-piano-arrangement-jnundead-anime-on-piano"
+    # "https://chordify.net/chords/oniichan-wa-oshimai-op-iden-tei-tei-meltdown-full-ver-piano-arrangement-jnundead-anime-on-piano",
+    # "https://chordify.net/chords/oniichan-wa-oshimai-ed-himegoto-crisisters-full-ver-piano-arrangement-jnundead-anime-on-piano",
+    # "https://chordify.net/chords/aiden-zhen-zhenmerutodaun-enako-feat-pmarusama-topic",
+    # "https://chordify.net/chords/onimai-sisters-gao-ye-ma-li-jiashi-yuan-xia-zhijin-yuan-shou-zij-songs/himegoto-kuraishisutazu-chords",
+    # "https://chordify.net/chords/ying-dao-ma-yi-gu-he-peng-hui-shuang-ye-li-yang-li-bangnodoka-zi-songs/bu-ke-si-yinokarute-chords?version=youtube:7lvDCMkjcsM",
+    # "https://chordify.net/chords/deco-27-monitaringu-feat-chu-yinmiku-deco-27"
 ]
 
+import threading
 if __name__ == '__main__':
+    nmax = 2
     for url in urls:
-        while True:
-            try:
-                main = Main(url, proxies, 1)
-                main.get()
-                break
-            except Exception as e:
-                print("Request Error:", e)
+        def task():
+            while True:
+                try:
+                    print('\nTask started:', url)
+                    main = Main(url, proxies, 1)
+                    main.get()
+                    break
+                except Exception as e:
+                    print("Request Error:", e)
+        task()
         # try:
         #     main.get()
         # except Exception as e:
